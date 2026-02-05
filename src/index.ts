@@ -19,8 +19,7 @@ app.get("/track/:trackId/canvas", async (req, res) => {
   const { accept } = req.headers;
 
   try {
-    const token = await spotifyClient.getToken();
-    const canvasUrl = await getCanvasData(token, trackId);
+    const canvasUrl = await getCanvasData(spotifyClient, trackId);
 
     if (accept && accept.includes("application/json")) {
       return res.json({ canvasUrl });

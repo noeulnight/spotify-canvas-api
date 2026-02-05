@@ -1,4 +1,5 @@
 import { redisCache } from "../cache/redis.js";
+import type { SpotifyClient } from "./client.js";
 
 const CANVAS_SHA256_HASH =
   process.env.SPOTIFY_CANVAS_GQL_HASH ||
@@ -19,7 +20,7 @@ const canvasQueryBody = (trackUri: string) => ({
 });
 
 export async function getCanvasData(
-  token: string,
+  client: SpotifyClient,
   trackId: string,
 ): Promise<string> {
   // Check cache first
@@ -36,6 +37,7 @@ export async function getCanvasData(
   const trackUri = `spotify:track:${trackId}`;
   const url = "https://api-partner.spotify.com/pathfinder/v2/query";
 
+  const token = await client.getToken();
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -52,7 +54,7 @@ export async function getCanvasData(
     );
   }
 
-  const data = await response.json() as {
+  const data = (await response.json()) as {
     data: { trackUnion: { canvas: { url: string } } };
   };
 
