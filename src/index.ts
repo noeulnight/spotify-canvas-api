@@ -6,6 +6,14 @@ import { getCanvasData } from "./spotify/canvas.js";
 const spotifyClient = new SpotifyClient();
 const app = express();
 
+app.get("/", (req, res) => {
+  res.send("Spotify Canvas API is running.");
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
 app.get("/track/:trackId/canvas", async (req, res) => {
   const { trackId } = req.params;
   const { accept } = req.headers;
