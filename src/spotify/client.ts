@@ -2,13 +2,11 @@ import axios from "axios";
 import * as OTPAuth from "otpauth";
 import dotenv from "dotenv";
 import { redisCache } from "../cache/redis.js";
-import http from "http";
 import https from "https";
 
 dotenv.config();
 
 // Force IPv4 for axios requests
-const httpAgent = new http.Agent({ family: 4 });
 const httpsAgent = new https.Agent({ family: 4 });
 
 interface SecretsDict {
@@ -100,7 +98,6 @@ export class SpotifyClient {
       const response = await axios.get<SecretsDict>(this.secretsUrl, {
         timeout: 10000,
         headers: { "User-Agent": USER_AGENT },
-        httpAgent,
         httpsAgent,
       });
       return response.data;
@@ -163,7 +160,6 @@ export class SpotifyClient {
 
     const response = await axios.get(url.toString(), {
       headers: this.createHeaders(),
-      httpAgent,
       httpsAgent,
     });
 
@@ -206,7 +202,7 @@ export class SpotifyClient {
     try {
       const { data } = await axios.get<{ serverTime: string }>(
         `${SPOTIFY_ORIGIN}/api/server-time`,
-        { headers: this.createHeaders(), httpAgent, httpsAgent },
+        { headers: this.createHeaders(), httpsAgent },
       );
 
       const time = Number(data.serverTime);
