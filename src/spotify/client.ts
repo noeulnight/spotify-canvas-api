@@ -1,13 +1,9 @@
-import axios from "axios";
 import * as OTPAuth from "otpauth";
 import dotenv from "dotenv";
 import { redisCache } from "../cache/redis.js";
-import https from "https";
 
 dotenv.config();
 
-// Force IPv4 for axios requests
-const httpsAgent = new https.Agent({ family: 4 });
 
 interface SecretsDict {
   [version: string]: number[];
@@ -29,11 +25,6 @@ const TOTP_CONFIG = {
   digits: 6,
   algorithm: "SHA1" as const,
 };
-const FALLBACK_VERSION = "19";
-const FALLBACK_SECRET_DATA = [
-  99, 111, 47, 88, 49, 56, 118, 65, 52, 67, 50, 104, 117, 101, 55, 94, 95, 75,
-  94, 49, 69, 36, 85, 64, 74, 60,
-];
 
 export class SpotifyClient {
   private readonly spotifyToken: string;
@@ -88,26 +79,55 @@ export class SpotifyClient {
       console.error("Failed to update TOTP secrets:", error);
 
       if (!this.currentTotp) {
-        this.useFallbackSecret();
+        throw new Error("Failed to update TOTP secrets");
       }
     }
   }
 
   private async fetchSecretsFromGitHub(): Promise<SecretsDict> {
-    try {
-      const response = await axios.get<SecretsDict>(this.secretsUrl, {
-        timeout: 10000,
-        headers: { "User-Agent": USER_AGENT },
-        httpsAgent,
-      });
-      return response.data;
-    } catch (error) {
-      console.error(
-        "Failed to fetch secrets from GitHub:",
-        error instanceof Error ? error.message : error,
-      );
-      throw error;
+    const maxRetries = 3;
+    const retryDelay = 1000; // 1 second base delay
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        const response = await fetch(this.secretsUrl, {
+          signal: controller.signal,
+          headers: { "User-Agent": USER_AGENT },
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json() as SecretsDict;
+        return data;
+      } catch (error) {
+        const isLastAttempt = attempt === maxRetries;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        console.error(
+          `Failed to fetch secrets from GitHub (attempt ${attempt}/${maxRetries}):`,
+          errorMessage,
+        );
+
+        if (isLastAttempt) {
+          throw error;
+        }
+
+        // Wait before retrying with exponential backoff
+        const waitTime = retryDelay * Math.pow(2, attempt - 1);
+        console.log(`Retrying in ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
     }
+
+    // This should never be reached, but TypeScript needs it
+    throw new Error("Failed to fetch secrets after all retries");
   }
 
   private findNewestVersion(secrets: SecretsDict): string {
@@ -119,18 +139,6 @@ export class SpotifyClient {
     const mappedData = data.map((value, index) => value ^ ((index % 33) + 9));
     const hexData = Buffer.from(mappedData.join(""), "utf8").toString("hex");
     return OTPAuth.Secret.fromHex(hexData);
-  }
-
-  private useFallbackSecret(): void {
-    const totpSecret = this.createTotpSecret(FALLBACK_SECRET_DATA);
-
-    this.currentTotp = new OTPAuth.TOTP({
-      ...TOTP_CONFIG,
-      secret: totpSecret,
-    });
-
-    this.currentTotpVersion = FALLBACK_VERSION;
-    console.log("Using fallback TOTP secret");
   }
 
   public async getToken(
@@ -158,12 +166,16 @@ export class SpotifyClient {
       url.searchParams.append(key, value),
     );
 
-    const response = await axios.get(url.toString(), {
+    const response = await fetch(url.toString(), {
       headers: this.createHeaders(),
-      httpsAgent,
     });
 
-    const { accessToken, accessTokenExpirationTimestampMs } = response.data;
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json() as { accessToken: string; accessTokenExpirationTimestampMs: number };
+    const { accessToken, accessTokenExpirationTimestampMs } = data;
     if (!accessToken || !accessTokenExpirationTimestampMs) {
       throw new Error("Failed to retrieve access token");
     }
@@ -189,22 +201,31 @@ export class SpotifyClient {
     const localTime = Date.now();
     const serverTime = await this.getServerTime();
 
+    if (!this.currentTotpVersion) {
+      throw new Error("TOTP version not initialized");
+    }
+
     return {
       reason,
       productType,
       totp: this.generateTOTP(localTime),
-      totpVer: this.currentTotpVersion || FALLBACK_VERSION,
+      totpVer: this.currentTotpVersion,
       totpServer: this.generateTOTP(Math.floor(serverTime / 30)),
     };
   }
 
   private async getServerTime(): Promise<number> {
     try {
-      const { data } = await axios.get<{ serverTime: string }>(
+      const response = await fetch(
         `${SPOTIFY_ORIGIN}/api/server-time`,
-        { headers: this.createHeaders(), httpsAgent },
+        { headers: this.createHeaders() },
       );
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json() as { serverTime: string };
       const time = Number(data.serverTime);
       if (isNaN(time)) throw new Error("Invalid server time");
       return time * 1000;

@@ -1,4 +1,3 @@
-import axios from "axios";
 import { redisCache } from "../cache/redis.js";
 
 const CANVAS_SHA256_HASH =
@@ -37,23 +36,27 @@ export async function getCanvasData(
   const trackUri = `spotify:track:${trackId}`;
   const url = "https://api-partner.spotify.com/pathfinder/v2/query";
 
-  const response = await axios.post<{
-    data: { trackUnion: { canvas: { url: string } } };
-  }>(url, canvasQueryBody(trackUri), {
+  const response = await fetch(url, {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "User-Agent": USER_AGENT,
     },
+    body: JSON.stringify(canvasQueryBody(trackUri)),
   });
 
-  if (response.status !== 200) {
+  if (!response.ok) {
     throw new Error(
       `Failed to fetch canvas data: ${response.status} ${response.statusText}`,
     );
   }
 
-  const canvasURL = response.data.data.trackUnion?.canvas?.url;
+  const data = await response.json() as {
+    data: { trackUnion: { canvas: { url: string } } };
+  };
+
+  const canvasURL = data.data.trackUnion?.canvas?.url;
   if (!canvasURL) {
     throw new Error("No canvas data found for the given track ID");
   }
